@@ -1,0 +1,23 @@
+[package]
+name = "th_marinebenefit_translator"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+opt-level = 3		# Opt level 3
+lto = true			# Link-time opt on
+strip = true		# Strip symbols
+
+[dependencies]
+nutil = { path = "nutil" }
+encoding_rs = "0.8.31"
+encoding_rs_io = "0.1.7"
+regex = "1.7.0"
+bytebuffer = "2.0.1"
+
+[dependencies.iced-x86]
+version = "1.18.0"
+default-features = false
+features = ["std", "decoder", "fast_fmt"]

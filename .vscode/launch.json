@@ -1,0 +1,30 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "DebugG",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
+			"args": [
+				"g",
+				"th_kaikeidou.exe",
+				"strings.txt"
+			],
+			"cwd": "${workspaceRoot}/.debug/",
+		},
+		{
+			"name": "DebugB",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
+			"args": [
+				"b",
+				"th_kaikeidou.exe",
+				"strings.txt",
+				"th_kaikeidou_patch.exe"
+			],
+			"cwd": "${workspaceRoot}/.debug/",
+		}
+	]
+}
