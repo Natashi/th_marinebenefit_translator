@@ -21,7 +21,7 @@ fn main() {
 	
 	match *mode as char {
 		'g' => {
-			fn _do_stuff(argv: &Vec<String>) -> Result<(), NError> {
+			fn _do_stuff(argv: &[String]) -> Result<(), NError> {
 				let path_exe = &argv[2];
 				let path_out = &argv[3];
 				
@@ -42,7 +42,7 @@ fn main() {
 				print_help_and_exit();
 			}
 			
-			fn _do_stuff(argv: &Vec<String>) -> Result<(), NError> {
+			fn _do_stuff(argv: &[String]) -> Result<(), NError> {
 				let path_exe_in = &argv[2];
 				let path_translation_file = &argv[3];
 				let path_exe_out = &argv[4];

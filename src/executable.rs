@@ -41,20 +41,16 @@ impl Executable {
 				}
 			};
 		}
-		macro_rules! check_err_from_io {
+		macro_rules! wrap_io_operation {
 			( $wrp:expr ) => {
-				if $wrp.is_err() {
-					return Err(NError::ErrIO($wrp.unwrap_err()));
+				match $wrp {
+					Err(e) => return Err(NError::ErrIO(e)),
+					Ok(t) => t,
 				}
 			};
 		}
 		
-		let file_size: u64;
-		{
-			let res = file.metadata();
-			file_size = if res.is_ok() { res.unwrap().len() } else { 0 }
-		}
-		
+		let file_size: u64 = wrap_io_operation!(file.metadata()).len();	
 		if file_size < 0x10000 {
 			return Err(NError::ErrInvalidExe);
 		}
@@ -65,7 +61,7 @@ impl Executable {
 			}
 		}
 		
-		check_err_from_io!(file.seek(SeekFrom::Start(0x3c)));
+		wrap_io_operation!(file.seek(SeekFrom::Start(0x3c)));
 		self.offset_pe_header = nutil::read_t_or(file, 0u32);
 		
 		let min_size = (self.offset_pe_header as usize) 
@@ -76,7 +72,7 @@ impl Executable {
 		}
 		
 		{
-			check_err_from_io!(file.seek(SeekFrom::Start(self.offset_pe_header as u64)));
+			wrap_io_operation!(file.seek(SeekFrom::Start(self.offset_pe_header as u64)));
 			
 			fread_t!(PEHeaderCOFF, self.pe_header);
 			//println!("{}", obj_to_string(&self.pe_header));
@@ -95,7 +91,7 @@ impl Executable {
 		{
 			self.offset_section_table = self.offset_pe_header 
 				+ size_of::<PEHeaderCOFF>() as u32 + self.pe_header.sz_opt_headers as u32;
-			check_err_from_io!(file.seek(SeekFrom::Start(self.offset_section_table as u64)));
+			wrap_io_operation!(file.seek(SeekFrom::Start(self.offset_section_table as u64)));
 			
 			for _ in 0..self.pe_header.n_sections {
 				let section: PESectionHeader;
@@ -111,11 +107,8 @@ impl Executable {
 		let mut buf = [0u8; 8];
 		buf[..name.len()].clone_from_slice(name.as_bytes());
 		
-		for i in &self.sections {
-			if buf == i.name.to_le_bytes() {
-				return Some(i);
-			}
-		}
-		None
+		self.sections
+			.iter()
+			.find(|&x| x.name.to_le_bytes() == buf)
 	}
 }

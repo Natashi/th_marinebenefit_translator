@@ -7,13 +7,13 @@ use nutil::*;
 use crate::executable::*;
 use crate::headers::*;
 
-use iced_x86::{Decoder, DecoderOptions, Instruction, FastFormatter};
+use iced_x86::{Decoder, DecoderOptions, Instruction};
 use encoding_rs::SHIFT_JIS;
 use encoding_rs_io::DecodeReaderBytesBuilder;
 use regex::Regex;
 use bytebuffer::ByteBuffer;
 
-static STRING_SEARCH_REGIONS: &'static [(u32, u32)] = &[
+static STRING_SEARCH_REGIONS: &[(u32, u32)] = &[
 	//Spell names
 	(0x2c4f18, 0x2c6003),
 	//(0x02c54e0, 0x2c6003),
@@ -85,11 +85,10 @@ impl Patcher {
 	}
 	
 	pub fn initialize(&mut self, path: &str) -> Result<(), NError> {
-		let iores = File::open(path);
-		if iores.is_err() {
-			return Err(NError::ErrIO(iores.unwrap_err()));
-		}
-		self.file = Some(iores.unwrap());
+		self.file = match File::open(path) {
+			Err(e) => return Err(NError::ErrIO(e)),
+			Ok(t) => Some(t),
+		};
 		
 		self.exe.initialize(self.file.as_mut().unwrap())?;
 		
@@ -110,12 +109,9 @@ impl Patcher {
 	pub fn loader_load_strings_and_refs(&mut self) -> Result<(), NError> {
 		macro_rules! wrap_io_operation {
 			( $wrp:expr ) => {
-				{
-					let res = $wrp;
-					if res.is_err() {
-						return Err(NError::ErrIO(res.unwrap_err()));
-					}
-					res.unwrap()
+				match $wrp {
+					Err(e) => return Err(NError::ErrIO(e)),
+					Ok(t) => t,
 				}
 			};
 		}
@@ -140,21 +136,20 @@ impl Patcher {
 			
 			let mut cls_add_string = |s_bytes: &mut Vec<u8>, addr_phys: u32| {
 				//let dbg_str = SHIFT_JIS.decode(str_bytes.as_slice()).0.into_owned();
-				if s_bytes.len() > 0 {
-					// Calculate the virt addr from the given phys addr
-					let addr_virt = img_base + rdata.addr_virtual 
-						+ (addr_phys - rdata.addr_physical);
-					
-					let sref = StringRef {
-						str: s_bytes.clone(),
-						addr_virt,
-						addr_phys,
-						xrefs: Vec::new(),
-					};
-					self.map_strings.insert(addr_virt, sref);
-					
-					s_bytes.clear();
-				}
+				
+				// Calculate the virt addr from the given phys addr
+				let addr_virt = img_base + rdata.addr_virtual 
+					+ (addr_phys - rdata.addr_physical);
+				
+				let sref = StringRef {
+					str: s_bytes.clone(),
+					addr_virt,
+					addr_phys,
+					xrefs: Vec::new(),
+				};
+				self.map_strings.insert(addr_virt, sref);
+				
+				s_bytes.clear();
 			};
 			
 			for (bound_begin, bound_end) in STRING_SEARCH_REGIONS {
@@ -176,7 +171,7 @@ impl Patcher {
 							let ch: char = buffer[i as usize] as char;
 							match ch {
 								'\0' => {
-									if str_bytes.len() > 0 {
+									if !str_bytes.is_empty() {
 										let addr_phys = cur_pos_b - str_bytes.len() as u32;
 										cls_add_string(&mut str_bytes, addr_phys);
 									}
@@ -186,7 +181,7 @@ impl Patcher {
 						}
 						cur_pos += gcount;
 					}
-					if str_bytes.len() > 0 {
+					if !str_bytes.is_empty() {
 						// Bound ended, flush remaining str
 						
 						let addr_phys = end_pos - str_bytes.len() as u32;
@@ -201,6 +196,8 @@ impl Patcher {
 			let text = self.exe.get_section(".text").unwrap();
 			
 			/*
+			use iced_x86::FastFormatter;
+			
 			let mut formatter = FastFormatter::new();
 			formatter.options_mut().set_always_show_memory_size(false);
 			formatter.options_mut().set_always_show_segment_register(false);
@@ -226,7 +223,7 @@ impl Patcher {
 				text.addr_physical as u64, DecoderOptions::NONE);
 			
 			let mut i_decode: usize = 0;
-			while i_decode < avail_size as usize && decoder.can_decode() {
+			while i_decode < avail_size && decoder.can_decode() {
 				decoder.decode_out(&mut instr);
 				
 				let instr_len = instr.len();
@@ -242,7 +239,7 @@ impl Patcher {
 					let str_virt_addr = 
 						if buf_slice.len() == 5 && buf_slice[0] == 0xb8 || buf_slice[0] == 0x68 {
 							fn _slc_to_array(x : &[u8]) -> &[u8; 4] {	// Convert slice to array
-								return x.try_into().unwrap();
+								x.try_into().unwrap()
 							}
 							u32::from_le_bytes(*_slc_to_array(&buf_slice[1..]))
 						}
@@ -252,9 +249,8 @@ impl Patcher {
 					
 					if str_virt_addr != 0 {
 						// Check if the value is one of the strings we have
-						let find = self.map_strings.get_mut(&str_virt_addr);
-						if find.is_some() {
-							find.unwrap().xrefs.push(instr.ip32());
+						if let Some(find) = self.map_strings.get_mut(&str_virt_addr) {
+							find.xrefs.push(instr.ip32());
 						}
 					}
 				}
@@ -273,21 +269,22 @@ impl Patcher {
 		
 		println!("Creating translation file...");
 		
-		let res = File::create(out_path);
-		if res.is_err() {
-			return Err(NError::ErrIO(res.unwrap_err()));
-		}
+		let mut out_file = match File::create(out_path) {
+			Err(e) => return Err(NError::ErrIO(e)),
+			Ok(t) => t,
+		};
 		
 		fn _write(this: &Patcher, file: &mut File) -> io::Result<()> {
-			write!(file, "// Do not edit the hexadecimal values\n\n")?;
-			write!(file, "//    Format: [...] {{{{Replacing String}}}} {{{{Original String}}}} ...\n")?;
-			write!(file, "// The \"Replacing String\" field may be left empty, in which case the string will not be patched.\n\n")?;
-			write!(file, "// IMPORTANT: Strings of certain types have maximum sizes (in bytes, using Shift-JIS encoding).\n")?;
-			write!(file, "//    Spell card name:    62 bytes\n")?;
-			write!(file, "//    Dialogue line:      43 bytes\n")?;
-			write!(file, "//    Ending line:        94 bytes\n")?;
-			write!(file, "//    * Exceeding the max size can and will crash the game.\n")?;
-			write!(file, "\n\n")?;
+			writeln!(file, "// Do not edit the hexadecimal values")?;
+			writeln!(file)?;
+			writeln!(file, "//    Format: [...] {{{{Replacing String}}}} {{{{Original String}}}} ...")?;
+			writeln!(file, "// The \"Replacing String\" field may be left empty, in which case the string will not be patched.\n")?;
+			writeln!(file, "// IMPORTANT: Strings of certain types have maximum sizes (in bytes, using Shift-JIS encoding).")?;
+			writeln!(file, "//    Spell card name:    62 bytes")?;
+			writeln!(file, "//    Dialogue line:      43 bytes")?;
+			writeln!(file, "//    Ending line:        94 bytes")?;
+			writeln!(file, "//    * Exceeding the max size can and will crash the game.")?;
+			writeln!(file)?; writeln!(file)?;
 			
 			let mut vec_refs = this.map_strings
 				.iter()
@@ -300,24 +297,26 @@ impl Patcher {
 				
 				write!(file, "[{:08x},{:08x}] ", i.addr_virt, i.addr_phys)?;
 				write!(file, "{{{{}}}}                {{{{")?;
-				file.write(i.str.as_slice())?;		// Write raw bytes
+				
+				// Write string as raw bytes
+				file.write_all(i.str.as_slice())?;
+				
 				write!(file, "}}}} ")?;
 				
 				let xrefs_vec = i.xrefs
 					.iter()
 					.map(|x| format!("{:08x}", x))
 					.collect::<Vec<String>>();
-				write!(file, "[{}]", xrefs_vec.join(","))?;
-				
-				write!(file, "\n")?;
+				writeln!(file, "[{}]", xrefs_vec.join(","))?;
 			}
 			
 			Ok(())
 		}
-		return match _write(self, &mut res.unwrap()) {
+		
+		match _write(self, &mut out_file) {
 			Err(e) => Err(NError::ErrIO(e)),
 			_ => Ok(()),
-		};
+		}
 	}
 	
 	// ----------------------------------------------------------
@@ -330,67 +329,64 @@ impl Patcher {
 		
 		println!("Reading the translation file...");
 		
-		let res = File::open(path);
-		if res.is_err() {
-			return Err(NError::ErrIO(res.unwrap_err()));
-		}
-		let file = &mut res.unwrap();
+		let out_file = match File::open(path) {
+			Err(e) => return Err(NError::ErrIO(e)),
+			Ok(t) => t,
+		};
 		
 		// WARNING: This reads the file as Shift-JIS, and converts the lines into UTF-8 in Rust
 		let file_reader = BufReader::new(
 			DecodeReaderBytesBuilder::new()
 				.encoding(Some(SHIFT_JIS))
-				.build(file));
+				.build(out_file));
 		
-		let res_regex = Regex::new(concat!(
+		let regex_pattern = concat!(
 			r"(?:\[([0-9a-f]{8}),[0-9a-f]{8}\]\s+)",
 			r"(?:\{\{(.+)\}\}\s+)",
 			r"(?:\{\{.*\}\}\s+)",
 			r"(?:\[((?:[0-9a-f]{8},?)+)\])",
-		));
-		if res_regex.is_err() {
-			return Err(NError::ErrOther(res_regex.unwrap_err().to_string()));
-		}
-		let regex = &res_regex.unwrap();
+		);
+		let regex = match Regex::new(regex_pattern) {
+			Err(e) => return Err(NError::ErrOther(e.to_string())),
+			Ok(t) => t,
+		};
 		
-		for res_line in file_reader.lines() {
-			if let Ok(line) = res_line {
-				if line.len() < 20 || !line.starts_with('[') { continue; }
+		for line in file_reader.lines().flatten() {
+			if line.len() < 20 || !line.starts_with('[') { continue; }
+			
+			let res_match = regex.captures(line.trim());
+			if let Some(smatch) = &res_match {
+				//Group 1: virtual addr
+				//Group 2: replacing string
+				//Group 3: xref list
 				
-				let res_match = regex.captures(&line.trim());
-				if let Some(smatch) = &res_match {
-					//Group 1: virtual addr
-					//Group 2: replacing string
-					//Group 3: xref list
-					
-					let s_addr_virt = smatch.get(1).unwrap().as_str();
-					let s_patch_str = smatch.get(2).unwrap().as_str();
-					let s_xref_list = smatch.get(3).unwrap().as_str();
-					
-					// If the replacing str is empty, don't patch that string
-					if s_patch_str.len() > 0 {
-						if let Ok(addr_virt) = u32::from_str_radix(s_addr_virt, 16) {
-							// Convert UTF-8 string into Shift-JIS bytes
-							let bytes_shjis = SHIFT_JIS.encode(s_patch_str).0.into_owned();
-							
-							let mut sref = StringRef {
-								str: bytes_shjis,
-								addr_virt,
-								addr_phys: 0,
-								xrefs: Vec::new(),
-							};
-							
-							let vec_xref = s_xref_list
-								.split(',')
-								.map(|x| u32::from_str_radix(x, 16).unwrap_or_default())
-								.filter(|x| *x > 0)
-								.collect::<Vec<u32>>();
-							for i in vec_xref {
-								sref.xrefs.push(i);
-							}
-							
-							self.map_strings.insert(sref.addr_virt, sref);
+				let s_addr_virt = smatch.get(1).unwrap().as_str();
+				let s_patch_str = smatch.get(2).unwrap().as_str();
+				let s_xref_list = smatch.get(3).unwrap().as_str();
+				
+				// If the replacing str is empty, don't patch that string
+				if !s_patch_str.is_empty() {
+					if let Ok(addr_virt) = u32::from_str_radix(s_addr_virt, 16) {
+						// Convert UTF-8 string into Shift-JIS bytes
+						let bytes_shjis = SHIFT_JIS.encode(s_patch_str).0.into_owned();
+						
+						let mut sref = StringRef {
+							str: bytes_shjis,
+							addr_virt,
+							addr_phys: 0,
+							xrefs: Vec::new(),
+						};
+						
+						let vec_xref = s_xref_list
+							.split(',')
+							.map(|x| u32::from_str_radix(x, 16).unwrap_or_default())
+							.filter(|x| *x > 0)
+							.collect::<Vec<u32>>();
+						for i in vec_xref {
+							sref.xrefs.push(i);
 						}
+						
+						self.map_strings.insert(sref.addr_virt, sref);
 					}
 				}
 			}
@@ -404,12 +400,9 @@ impl Patcher {
 	pub fn patcher_create_patch_exe(&mut self, out_path: &str) -> Result<(), NError> {
 		macro_rules! wrap_io_operation {
 			( $wrp:expr ) => {
-				{
-					let res = $wrp;
-					if res.is_err() {
-						return Err(NError::ErrIO(res.unwrap_err()));
-					}
-					res.unwrap()
+				match $wrp {
+					Err(e) => return Err(NError::ErrIO(e)),
+					Ok(t) => t,
 				}
 			};
 		}
@@ -440,7 +433,14 @@ impl Patcher {
 		
 		// Write strings into the temp buffer and update addresses
 		{
-			for (_, str_ref) in &mut self.map_strings {
+			/*
+			let mut vec_refs = self.map_strings
+				.values_mut()
+				.collect::<Vec<&mut StringRef>>();
+			vec_refs.sort_by(|a, b| a.addr_phys.cmp(&b.addr_phys));
+			*/
+			let vec_refs = self.map_strings.values_mut();
+			for str_ref in vec_refs {
 				str_ref.addr_virt = str_reloc_base_addr_virt + reloc_size;
 				str_ref.addr_phys = str_reloc_base_addr_phys + reloc_size;
 				
@@ -501,20 +501,20 @@ impl Patcher {
 		
 		// Replace string refs
 		{
-			for (_, str_ref) in &self.map_strings {
+			for str_ref in self.map_strings.values() {
 				for i_xref in &str_ref.xrefs {
 					// +1 for the initial opcode byte
 					wrap_io_operation!(out_file.seek(SeekFrom::Start((i_xref + 1) as u64)));
-					wrap_io_operation!(out_file.write(&str_ref.addr_virt.to_le_bytes()));
+					wrap_io_operation!(out_file.write_all(&str_ref.addr_virt.to_le_bytes()));
 				}
 			}
 		}
 		
 		// Update section table
 		{
-			fn write_struct<T: Sized, W: Write>(dest: &mut W, val: &T) -> io::Result<usize> {
+			fn write_struct<T: Sized, W: Write>(dest: &mut W, val: &T) -> io::Result<()> {
 				let bytes = unsafe { any_as_u8_slice(val) };
-				dest.write(bytes)
+				dest.write_all(bytes)
 			}
 			
 			wrap_io_operation!(out_file.seek(SeekFrom::Start(self.exe.offset_pe_header as u64)));
