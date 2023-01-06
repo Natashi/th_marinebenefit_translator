@@ -7,7 +7,7 @@ A program I made to patch and translate the Touhou fangame "東方海恵堂 ～ 
 ### From the source code
 
 - **You'll need:**
- - rustc (any version that works, I used 1.66.0)
+  - rustc (any version that works, I used 1.66.0)
 - **Then do:**
 
     ```
